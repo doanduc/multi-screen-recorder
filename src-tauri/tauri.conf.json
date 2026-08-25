@@ -32,7 +32,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "msi"],
     "icon": ["icons/icon.ico"],
     "resources": ["binaries/ffmpeg.exe"],
     "windows": {

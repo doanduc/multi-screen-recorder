@@ -4,3 +4,7 @@ src-tauri/gen/schemas/
 src-tauri/binaries/ffmpeg.exe
 dist/
 *.log
+msix/binaries/
+msix/*.exe
+msix-output/
+Screenshot *.png
