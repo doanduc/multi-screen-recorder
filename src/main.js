@@ -5,11 +5,13 @@
  */
 
 (function () {
-  const { invoke, convertFileSrc } = window.__TAURI__.core;
+  const { invoke } = window.__TAURI__.core;
   const { listen } = window.__TAURI__.event;
   const appWindow = window.__TAURI__.window.getCurrentWindow();
 
   const MAX_SCREENS = 4;
+  // Frame rate the composite canvas is driven at, and what the recorder targets.
+  const DEFAULT_FPS = 30;
 
   // --- Elements ---
   const screenGrid = document.getElementById('screen-grid');
@@ -20,19 +22,29 @@
   const toggleMic = document.getElementById('toggle-mic');
   const toggleSystemAudio = document.getElementById('toggle-system-audio');
   const toggleWebcam = document.getElementById('toggle-webcam');
-  const toggleConvertMp4 = document.getElementById('toggle-convert-mp4');
   const toggleStopTimer = document.getElementById('toggle-stop-timer');
   const timerMinutes = document.getElementById('timer-minutes');
   const timerSeconds = document.getElementById('timer-seconds');
   const timerCountdownEl = document.getElementById('timer-countdown');
-  const bitrateChips = document.getElementById('bitrate-chips');
-  const bitrateHint = document.getElementById('bitrate-hint');
-  const codecSegmented = document.getElementById('codec-segmented');
+  const selectResolution = document.getElementById('select-resolution');
+  const selectFormat = document.getElementById('select-format');
+  const rangeBitrate = document.getElementById('range-bitrate');
+  const qualityName = document.getElementById('quality-name');
+  const qualityHint = document.getElementById('quality-hint');
+  const qualityBars = document.querySelectorAll('#quality-preview .qp-bar');
+  const estimateSize = document.getElementById('estimate-size');
+  const webcamOptions = document.getElementById('webcam-options');
+  const webcamPositionPicker = document.getElementById('webcam-position');
+  const toggleWebcamCircle = document.getElementById('toggle-webcam-circle');
+  const webcamPreview = document.getElementById('webcam-preview');
+  const webcamPreviewVideo = document.getElementById('webcam-preview-video');
+  const btnTheme = document.getElementById('btn-theme');
   const statusEl = document.getElementById('status');
   const statusDot = document.getElementById('status-dot');
   const durationEl = document.getElementById('duration');
   const recIndicator = document.getElementById('rec-indicator');
   const btnRecord = document.getElementById('btn-record');
+  const recordLabel = btnRecord.querySelector('.record-label');
   const btnPreview = document.getElementById('btn-preview');
   const btnConvertFile = document.getElementById('btn-convert-file');
   const previewModal = document.getElementById('preview-modal');
@@ -53,6 +65,20 @@
   let selectedCodec = 'vp8';
   let selectedBitrate = 3000000;
   let maxRes = { w: 1920, h: 1080 };
+  let targetFps = DEFAULT_FPS;
+  let convertToMp4 = false;
+  let webcamPosition = 'bottom-right';
+  let webcamCircle = false;
+
+  // Quality presets the slider maps onto. Bitrate drives both file size and how
+  // well fine detail (small text especially) survives compression.
+  const QUALITY_LEVELS = [
+    { rate: 1000000, name: 'Draft', hint: 'Smallest file — fine for rough captures, text may blur' },
+    { rate: 2000000, name: 'Light', hint: 'Small file — readable text on simple screens' },
+    { rate: 3000000, name: 'Balanced', hint: 'Text stays readable — good for most recordings' },
+    { rate: 5000000, name: 'Sharp', hint: 'Crisp text and smooth motion — larger file' },
+    { rate: 8000000, name: 'Maximum', hint: 'Best clarity for small text and video — largest file' }
+  ];
   let isRecording = false;
   let mediaRecorder = null;
   let recordedChunks = [];
@@ -89,14 +115,15 @@
 
   function updateHint() {
     if (screens.length === 0) {
-      sourceHint.textContent = 'Add one or more screens — they are combined into a grid in a single video.';
+      sourceHint.textContent = 'Arrange screens to define the video layout';
     } else {
-      const layout = screens.length === 2 ? '2x1' : screens.length > 2 ? '2x2' : '';
+      const layout = screens.length === 2 ? '2×1' : screens.length > 2 ? '2×2' : '1×1';
       sourceHint.textContent = screens.length + ' screen' + (screens.length > 1 ? 's' : '') +
-        ' added' + (layout ? ' — combined as a ' + layout + ' grid in a single video.' : '.');
+        ' — combined as a ' + layout + ' grid in a single video';
     }
     btnAddScreen.disabled = screens.length >= MAX_SCREENS || isRecording;
     screenEmpty.classList.toggle('hidden', screens.length > 0);
+    screenGrid.classList.toggle('locked', isRecording);
   }
 
   function showConvertProgress(fileName) {
@@ -123,7 +150,7 @@
     let stream;
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: { ideal: 60 } },
+        video: { frameRate: { ideal: targetFps } },
         // Ask for system audio on the first screen; user can tick "share audio" in the picker
         audio: screens.length === 0
       });
@@ -143,6 +170,15 @@
 
     const tile = document.createElement('div');
     tile.className = 'screen-tile';
+    tile.dataset.id = String(id);
+    const handle = document.createElement('span');
+    handle.className = 'tile-handle';
+    handle.title = 'Drag to reorder';
+    handle.innerHTML =
+      '<svg viewBox="0 0 16 10" fill="currentColor">' +
+      '<circle cx="3" cy="3" r="1.3"/><circle cx="8" cy="3" r="1.3"/><circle cx="13" cy="3" r="1.3"/>' +
+      '<circle cx="3" cy="7" r="1.3"/><circle cx="8" cy="7" r="1.3"/><circle cx="13" cy="7" r="1.3"/>' +
+      '</svg>';
     const video = document.createElement('video');
     video.autoplay = true;
     video.muted = true;
@@ -158,7 +194,8 @@
     removeBtn.innerHTML = '&times;';
     removeBtn.title = 'Remove this screen';
     removeBtn.addEventListener('click', () => removeScreen(id));
-    tile.append(video, badge, labelEl, removeBtn);
+    tile.append(video, handle, badge, labelEl, removeBtn);
+    attachTileDrag(tile);
     screenGrid.appendChild(tile);
 
     const entry = { id, stream, label, tile };
@@ -191,6 +228,86 @@
     screens.forEach((s, i) => {
       s.tile.querySelector('.tile-badge').textContent = String(i + 1);
     });
+  }
+
+  // --- Reordering ---
+  // Order decides where each source lands in the grid, so dragging tiles is how
+  // the layout gets arranged. Locked while recording: the canvas reads this
+  // array every frame and reshuffling mid-take would swap cells in the video.
+  //
+  // Uses pointer events rather than HTML5 drag-and-drop: the app sets
+  // `user-select: none` globally, which stops WebView2 from ever firing
+  // dragstart, and pointer capture also gives smoother feedback.
+  function attachTileDrag(tile) {
+    let dragging = false;
+    let startX = 0;
+    let startY = 0;
+
+    function tileUnder(x, y) {
+      return document
+        .elementsFromPoint(x, y)
+        .find((el) => el.classList && el.classList.contains('screen-tile'));
+    }
+
+    function clearTargets() {
+      screenGrid.querySelectorAll('.drop-target').forEach((el) => {
+        el.classList.remove('drop-target');
+      });
+    }
+
+    tile.addEventListener('pointerdown', (e) => {
+      // Left button only, and never from the remove button.
+      if (e.button !== 0 || isRecording) return;
+      if (e.target.closest('.tile-remove')) return;
+
+      startX = e.clientX;
+      startY = e.clientY;
+      dragging = false;
+      tile.setPointerCapture(e.pointerId);
+    });
+
+    tile.addEventListener('pointermove', (e) => {
+      if (!tile.hasPointerCapture(e.pointerId) || isRecording) return;
+
+      // Only start once the pointer clears a small threshold, so a plain click
+      // on the tile does not count as a drag.
+      if (!dragging) {
+        if (Math.hypot(e.clientX - startX, e.clientY - startY) < 6) return;
+        dragging = true;
+        tile.classList.add('dragging');
+      }
+
+      clearTargets();
+      const over = tileUnder(e.clientX, e.clientY);
+      if (over && over !== tile) over.classList.add('drop-target');
+    });
+
+    function finish(e) {
+      if (!tile.hasPointerCapture(e.pointerId)) return;
+      tile.releasePointerCapture(e.pointerId);
+      if (!dragging) return;
+
+      dragging = false;
+      tile.classList.remove('dragging');
+      clearTargets();
+
+      const over = tileUnder(e.clientX, e.clientY);
+      if (!over || over === tile) return;
+
+      const from = screens.findIndex((s) => s.tile === tile);
+      const to = screens.findIndex((s) => s.tile === over);
+      if (from < 0 || to < 0) return;
+
+      const [moved] = screens.splice(from, 1);
+      screens.splice(to, 0, moved);
+
+      // Re-append in the new order so the DOM matches the array.
+      screens.forEach((s) => screenGrid.appendChild(s.tile));
+      renumberBadges();
+    }
+
+    tile.addEventListener('pointerup', finish);
+    tile.addEventListener('pointercancel', finish);
   }
 
   // --- Audio merge ---
@@ -262,29 +379,85 @@
         ctx.drawImage(v, cx + (cw - dw) / 2, cy + (ch - dh) / 2, dw, dh);
       });
       if (webcamVideo && webcamVideo.videoWidth) {
-        const padding = Math.max(8, Math.round(outW * 0.01));
+        const pad = Math.max(8, Math.round(outW * 0.01));
+        const vw = webcamVideo.videoWidth;
+        const vh = webcamVideo.videoHeight;
+
+        // A circle needs a square frame; a rectangle keeps the camera's aspect.
         const w = Math.floor(outW * 0.2);
-        const h = Math.floor(w * (webcamVideo.videoHeight / webcamVideo.videoWidth));
-        ctx.drawImage(webcamVideo, outW - w - padding, outH - h - padding, w, h);
+        const h = webcamCircle ? w : Math.floor(w * (vh / vw));
+
+        const right = webcamPosition.endsWith('right');
+        const bottom = webcamPosition.startsWith('bottom');
+        const x = right ? outW - w - pad : pad;
+        const y = bottom ? outH - h - pad : pad;
+
+        ctx.save();
+        if (webcamCircle) {
+          ctx.beginPath();
+          ctx.arc(x + w / 2, y + h / 2, w / 2, 0, Math.PI * 2);
+          ctx.clip();
+        }
+        // Cover the frame: crop the long edge instead of squashing the picture.
+        const scale = Math.max(w / vw, h / vh);
+        const dw = vw * scale;
+        const dh = vh * scale;
+        ctx.drawImage(webcamVideo, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+        ctx.restore();
       }
     }
 
-    let animId;
-    function loop() {
+    // captureStream(fps) only sets an upper bound: Chromium emits a frame only
+    // when the canvas pixels actually change. Recording a still desktop then
+    // yields ~1 fps -- one frame each time the taskbar clock ticks -- which
+    // looks frozen when scrubbing. Drive the stream manually instead so every
+    // recording runs at a real, constant frame rate.
+    const stream = canvas.captureStream(0);
+    const [canvasTrack] = stream.getVideoTracks();
+    const frameMs = 1000 / targetFps;
+
+    let animId = null;
+    let lastFrame = 0;
+
+    function pushFrame(now) {
       draw();
+      if (canvasTrack && typeof canvasTrack.requestFrame === 'function') {
+        canvasTrack.requestFrame();
+      }
+      lastFrame = now;
+    }
+
+    function loop(now) {
+      if (now - lastFrame >= frameMs - 1) pushFrame(now);
       animId = requestAnimationFrame(loop);
     }
     animId = requestAnimationFrame(loop);
-    const intervalId = setInterval(draw, 33); // keeps drawing if rAF is throttled
+
+    // rAF stops when the window is occluded, and a main-thread setInterval gets
+    // clamped to ~1 Hz in the background. A worker's timer keeps its rate, so
+    // use one as the metronome that keeps frames flowing while hidden.
+    const tickSrc =
+      'let id=null;onmessage=(e)=>{' +
+      'if(e.data.stop){clearInterval(id);return;}' +
+      'clearInterval(id);id=setInterval(()=>postMessage(0),e.data.ms);};';
+    const tickUrl = URL.createObjectURL(new Blob([tickSrc], { type: 'text/javascript' }));
+    const ticker = new Worker(tickUrl);
+    ticker.onmessage = () => {
+      const now = performance.now();
+      if (now - lastFrame >= frameMs - 1) pushFrame(now);
+    };
+    ticker.postMessage({ ms: frameMs });
 
     compositeCleanups.push(() => {
-      cancelAnimationFrame(animId);
-      clearInterval(intervalId);
+      if (animId !== null) cancelAnimationFrame(animId);
+      ticker.postMessage({ stop: true });
+      ticker.terminate();
+      URL.revokeObjectURL(tickUrl);
       videos.forEach((v) => { v.srcObject = null; });
       if (webcamVideo) webcamVideo.srcObject = null;
     });
 
-    return canvas.captureStream(60);
+    return stream;
   }
 
   function stopComposite() {
@@ -316,7 +489,8 @@
       }
     }
 
-    if (useWebcam) {
+    // The preview usually opened the camera already; only ask again if it did not.
+    if (useWebcam && !webcamStream) {
       try {
         webcamStream = await navigator.mediaDevices.getUserMedia({ video: true });
       } catch (e) {
@@ -386,7 +560,7 @@
 
       const blob = new Blob(recordedChunks, { type: recorderMime });
       recordedChunks = [];
-      const doConvert = toggleConvertMp4.checked;
+      const doConvert = convertToMp4;
       cleanupAfterRecording();
 
       try {
@@ -417,8 +591,10 @@
     recIndicator.classList.remove('hidden');
     btnRecord.classList.add('recording');
     btnRecord.title = 'Stop recording';
+    recordLabel.textContent = 'Stop recording';
     btnAddScreen.disabled = true;
     btnConvertFile.disabled = true;
+    updateHint();
 
     // Auto-stop timer
     if (toggleStopTimer.checked) {
@@ -459,9 +635,13 @@
       });
       recordStream = null;
     }
-    if (webcamStream) {
+    // Keep the camera running if the toggle is still on, so its preview stays live.
+    if (webcamStream && !toggleWebcam.checked) {
       webcamStream.getTracks().forEach((t) => t.stop());
       webcamStream = null;
+    } else if (webcamStream) {
+      webcamPreviewVideo.srcObject = webcamStream;
+      webcamPreviewVideo.play().catch(() => {});
     }
     if (micStream) {
       micStream.getTracks().forEach((t) => t.stop());
@@ -482,6 +662,7 @@
     recIndicator.classList.add('hidden');
     btnRecord.classList.remove('recording');
     btnRecord.title = 'Start recording';
+    recordLabel.textContent = 'Start recording';
     btnConvertFile.disabled = false;
     updateHint();
   }
@@ -503,9 +684,15 @@
   }
 
   // --- Preview ---
+  // Serve the file over the stream:// protocol, which answers range requests so
+  // seeking jumps straight to the target instead of reading from the start.
+  function streamUrl(path) {
+    return 'http://stream.localhost/' + encodeURIComponent(path);
+  }
+
   function showPreview() {
     if (!lastSavedPath) return;
-    previewVideo.src = convertFileSrc(lastSavedPath);
+    previewVideo.src = streamUrl(lastSavedPath);
     previewTitle.textContent = baseName(lastSavedPath);
     previewModal.classList.remove('hidden');
   }
@@ -559,32 +746,114 @@
     if (e.target === previewModal) closePreview();
   });
 
-  bitrateChips.querySelectorAll('.chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      selectedBitrate = parseInt(chip.dataset.rate, 10) || 3000000;
-      bitrateChips.querySelectorAll('.chip').forEach((c) => c.classList.toggle('active', c === chip));
-      bitrateHint.textContent = chip.dataset.hint || '';
+  // VP8/VP9 in MediaRecorder encode variable-bitrate: videoBitsPerSecond is a
+  // ceiling, not a target, and a mostly-static screen lands far below it.
+  // Measured against real recordings at the 3 Mbps setting, a still desktop used
+  // about 5-7% of the ceiling and a busy one about 40-50%, so quote that span
+  // instead of the ceiling itself, which overstated size by roughly 15x.
+  const STILL_RATIO = 0.06;
+  const ACTIVE_RATIO = 0.45;
+
+  function mbFor(bps, seconds, ratio) {
+    return (bps * ratio / 8) * seconds / (1024 * 1024);
+  }
+
+  function formatSize(mb) {
+    if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
+    return (mb < 10 ? mb.toFixed(1) : String(Math.round(mb))) + ' MB';
+  }
+
+  function formatEstimate() {
+    // Audio is close to constant bitrate, so it is counted in full.
+    const audioBps = toggleMic.checked || toggleSystemAudio.checked ? 128000 : 0;
+    const audioMb = (audioBps / 8) * 600 / (1024 * 1024);
+    const low = mbFor(selectedBitrate, 600, STILL_RATIO) + audioMb;
+    const high = mbFor(selectedBitrate, 600, ACTIVE_RATIO) + audioMb;
+    return formatSize(low) + '–' + formatSize(high);
+  }
+
+  function updateQuality() {
+    const level = QUALITY_LEVELS[parseInt(rangeBitrate.value, 10)] || QUALITY_LEVELS[2];
+    selectedBitrate = level.rate;
+    qualityName.textContent = level.name;
+    qualityHint.textContent = level.hint;
+    qualityBars.forEach((bar, i) => {
+      bar.classList.toggle('on', i <= parseInt(rangeBitrate.value, 10));
     });
+    estimateSize.textContent = formatEstimate();
+  }
+
+  rangeBitrate.addEventListener('input', updateQuality);
+  toggleMic.addEventListener('change', updateQuality);
+  toggleSystemAudio.addEventListener('change', updateQuality);
+
+  selectResolution.addEventListener('change', () => {
+    const [w, h] = selectResolution.value.split('x').map(Number);
+    maxRes = { w: w || 1920, h: h || 1080 };
   });
 
-  const resChips = document.getElementById('res-chips');
-  const resHint = document.getElementById('res-hint');
-  resChips.querySelectorAll('.chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      maxRes = {
-        w: parseInt(chip.dataset.w, 10) || 1920,
-        h: parseInt(chip.dataset.h, 10) || 1080
-      };
-      resChips.querySelectorAll('.chip').forEach((c) => c.classList.toggle('active', c === chip));
-      resHint.textContent = chip.dataset.hint || '';
-    });
+  // "mp4" records WebM first, then converts; the codec picks the WebM encoder.
+  selectFormat.addEventListener('change', () => {
+    const v = selectFormat.value;
+    convertToMp4 = v === 'mp4';
+    selectedCodec = v === 'webm-vp9' ? 'vp9' : 'vp8';
   });
 
-  codecSegmented.querySelectorAll('.seg-btn').forEach((btn) => {
+  // --- Webcam options ---
+  // Open the camera as soon as it is switched on, so the corner and shape
+  // choices can be judged against a live picture instead of guessed at.
+  async function startWebcamPreview() {
+    if (webcamStream) return;
+    try {
+      webcamStream = await navigator.mediaDevices.getUserMedia({ video: true });
+    } catch (e) {
+      showError('Could not open the camera: ' + (e.message || e.name || 'unknown error'));
+      toggleWebcam.checked = false;
+      webcamOptions.classList.add('hidden');
+      return;
+    }
+    webcamPreviewVideo.srcObject = webcamStream;
+    webcamPreviewVideo.play().catch(() => {});
+    webcamPreview.classList.remove('hidden');
+  }
+
+  function stopWebcamPreview() {
+    webcamPreview.classList.add('hidden');
+    webcamPreviewVideo.srcObject = null;
+    // Keep the stream alive while recording - the composite canvas is using it.
+    if (webcamStream && !isRecording) {
+      webcamStream.getTracks().forEach((t) => t.stop());
+      webcamStream = null;
+    }
+  }
+
+  function updateWebcamPreview() {
+    webcamPreview.classList.toggle('circle', webcamCircle);
+    webcamPreview.dataset.pos = webcamPosition;
+  }
+
+  toggleWebcam.addEventListener('change', () => {
+    const on = toggleWebcam.checked;
+    webcamOptions.classList.toggle('hidden', !on);
+    if (on) startWebcamPreview();
+    else stopWebcamPreview();
+  });
+
+  webcamPositionPicker.querySelectorAll('.corner').forEach((btn) => {
     btn.addEventListener('click', () => {
-      selectedCodec = btn.dataset.codec;
-      codecSegmented.querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b === btn));
+      webcamPosition = btn.dataset.pos;
+      webcamPositionPicker.querySelectorAll('.corner').forEach((b) => {
+        const on = b === btn;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', String(on));
+      });
+      updateWebcamPreview();
     });
+  });
+
+  toggleWebcamCircle.addEventListener('change', () => {
+    webcamCircle = toggleWebcamCircle.checked;
+    updateWebcamPreview();
   });
 
   function updateTimerInputs() {
@@ -611,7 +880,68 @@
     invoke('open_recordings_folder').catch((e) => showError(String(e)));
   });
 
+  // --- About ---
+  const aboutModal = document.getElementById('about-modal');
+  const btnAbout = document.getElementById('btn-about');
+  const btnCloseAbout = document.getElementById('btn-close-about');
+
+  function openEmail() {
+    invoke('open_feedback_email').catch((e) => showError(String(e)));
+  }
+
+  btnAbout.addEventListener('click', () => aboutModal.classList.remove('hidden'));
+  btnCloseAbout.addEventListener('click', () => aboutModal.classList.add('hidden'));
+  aboutModal.addEventListener('click', (e) => {
+    if (e.target === aboutModal) aboutModal.classList.add('hidden');
+  });
+  document.getElementById('btn-email').addEventListener('click', openEmail);
+  document.getElementById('link-email').addEventListener('click', (e) => {
+    e.preventDefault();
+    openEmail();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    aboutModal.classList.add('hidden');
+    if (!previewModal.classList.contains('hidden')) closePreview();
+  });
+
+  // --- Theme ---
+  // Remembered per machine; falls back to whatever the OS reports.
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    btnTheme.title = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+    try {
+      localStorage.setItem('theme', theme);
+    } catch (e) {
+      /* private mode or blocked storage - the theme still applies for this run */
+    }
+  }
+
+  function initTheme() {
+    let saved = null;
+    try {
+      saved = localStorage.getItem('theme');
+    } catch (e) {
+      /* ignore */
+    }
+    if (saved !== 'dark' && saved !== 'light') {
+      saved = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    }
+    applyTheme(saved);
+  }
+
+  btnTheme.addEventListener('click', () => {
+    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+  });
+
   // --- Init ---
+  initTheme();
+  updateQuality();
+  const [initW, initH] = selectResolution.value.split('x').map(Number);
+  maxRes = { w: initW || 1920, h: initH || 1080 };
+
   invoke('get_recordings_path')
     .then((p) => {
       recordingsPathEl.textContent = p || '—';

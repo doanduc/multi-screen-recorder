@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+use tauri::http;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
@@ -85,6 +86,15 @@ fn open_recordings_folder(app: AppHandle, state: State<'_, AppState>) -> Result<
     ensure_dir(&dir)?;
     app.opener()
         .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+// Open the author's address in the user's mail client, from the About dialog.
+#[tauri::command]
+fn open_feedback_email(app: AppHandle) -> Result<(), String> {
+    let url = "mailto:thanhduc@banmai.org?subject=Multi%20Screen%20Recorder%20feedback";
+    app.opener()
+        .open_url(url, None::<&str>)
         .map_err(|e| e.to_string())
 }
 
@@ -238,10 +248,125 @@ async fn convert_file_to_mp4(app: AppHandle) -> Result<ConvertFileResult, String
     }
 }
 
+/// Serve a recording over `stream://localhost/<url-encoded path>` with HTTP range
+/// support, so the preview player can seek without downloading from the start.
+///
+/// The built-in `asset:` protocol ignores Range requests, which makes the
+/// `<video>` element read a long recording sequentially on every seek.
+fn stream_protocol<R: tauri::Runtime>(
+    _ctx: tauri::UriSchemeContext<'_, R>,
+    request: http::Request<Vec<u8>>,
+) -> http::Response<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let not_found = || {
+        http::Response::builder()
+            .status(404)
+            .body(Vec::new())
+            .unwrap()
+    };
+
+    // stream://localhost/<percent-encoded absolute path>
+    let encoded = request.uri().path().trim_start_matches('/');
+    let path = match percent_decode(encoded) {
+        Some(p) => PathBuf::from(p),
+        None => return not_found(),
+    };
+
+    let mut file = match fs::File::open(&path) {
+        Ok(f) => f,
+        Err(_) => return not_found(),
+    };
+    let total = match file.metadata() {
+        Ok(m) => m.len(),
+        Err(_) => return not_found(),
+    };
+
+    let mime = match path.extension().and_then(|e| e.to_str()) {
+        Some("mp4") => "video/mp4",
+        _ => "video/webm",
+    };
+
+    // Parse "Range: bytes=start-end"; absent means serve the whole file.
+    let range = request
+        .headers()
+        .get(http::header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(parse_range);
+
+    let (start, end) = match range {
+        Some((s, e)) => (s.min(total), e.unwrap_or(total - 1).min(total - 1)),
+        None => (0, total.saturating_sub(1)),
+    };
+    if total == 0 || start > end {
+        return http::Response::builder()
+            .status(416)
+            .header(http::header::CONTENT_RANGE, format!("bytes */{total}"))
+            .body(Vec::new())
+            .unwrap();
+    }
+
+    let len = end - start + 1;
+    let mut buf = vec![0u8; len as usize];
+    if file.seek(SeekFrom::Start(start)).is_err() || file.read_exact(&mut buf).is_err() {
+        return not_found();
+    }
+
+    let status = if range.is_some() { 206 } else { 200 };
+    http::Response::builder()
+        .status(status)
+        .header(http::header::CONTENT_TYPE, mime)
+        .header(http::header::ACCEPT_RANGES, "bytes")
+        .header(http::header::CONTENT_LENGTH, len.to_string())
+        .header(
+            http::header::CONTENT_RANGE,
+            format!("bytes {start}-{end}/{total}"),
+        )
+        .header("Access-Control-Allow-Origin", "*")
+        .body(buf)
+        .unwrap()
+}
+
+/// Parse a single-range `bytes=start-end` header value.
+fn parse_range(value: &str) -> Option<(u64, Option<u64>)> {
+    let spec = value.strip_prefix("bytes=")?;
+    let (start, end) = spec.split_once('-')?;
+    let start: u64 = start.trim().parse().ok()?;
+    let end = end.trim();
+    let end = if end.is_empty() {
+        None
+    } else {
+        Some(end.parse().ok()?)
+    };
+    Some((start, end))
+}
+
+/// Decode the percent-encoded path segment produced by `encodeURIComponent`.
+fn percent_decode(s: &str) -> Option<String> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if i + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok()?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                i += 3;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .register_uri_scheme_protocol("stream", stream_protocol)
         .setup(|app| {
             let handle = app.handle().clone();
             let dir = load_recordings_dir(&handle);
@@ -254,6 +379,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_recordings_path,
             open_recordings_folder,
+            open_feedback_email,
             change_recordings_path,
             save_webm,
             convert_to_mp4,

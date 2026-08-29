@@ -8,167 +8,332 @@
 </head>
 <body>
   <div class="window">
-    <div class="titlebar" data-tauri-drag-region>
-      <div class="traffic-lights">
-        <button type="button" id="tl-close" class="tl tl-close" title="Close"><span>&times;</span></button>
-        <button type="button" id="tl-min" class="tl tl-min" title="Minimize"><span>&minus;</span></button>
-        <button type="button" id="tl-max" class="tl tl-max" title="Zoom"><span>+</span></button>
-      </div>
-      <div class="titlebar-title" data-tauri-drag-region>
-        <span class="prompt-glyph">&gt;_</span>
-        <span data-tauri-drag-region>multi-screen-recorder</span>
+    <header class="titlebar" data-tauri-drag-region>
+      <div class="titlebar-brand" data-tauri-drag-region>
+        <span class="app-icon" aria-hidden="true">
+          <svg viewBox="0 0 1024 1024">
+            <rect width="1024" height="1024" rx="224" fill="#2563EB"/>
+            <path d="M236 260c0-39.8 32.2-72 72-72h408c39.8 0 72 32.2 72 72v296c0 39.8-32.2 72-72 72h-76v44h72c22.1 0 40 17.9 40 40s-17.9 40-40 40H312c-22.1 0-40-17.9-40-40s17.9-40 40-40h72v-44h-76c-39.8 0-72-32.2-72-72V260Z" fill="#FFFFFF" opacity=".56"/>
+            <rect x="344" y="324" width="464" height="356" rx="72" fill="#FFFFFF"/>
+            <circle cx="576" cy="502" r="78" fill="#2563EB"/>
+          </svg>
+        </span>
+        <span data-tauri-drag-region>Multi Screen Recorder</span>
       </div>
       <div class="titlebar-right">
-        <span id="rec-indicator" class="rec-indicator hidden"><span class="rec-dot"></span><span id="duration">00:00</span></span>
+        <span id="rec-indicator" class="rec-indicator hidden">
+          <span class="rec-dot"></span><span id="duration">00:00</span>
+        </span>
+        <button type="button" id="btn-about" class="win-btn" title="About this app">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M12 11v5.5" stroke-linecap="round"/>
+            <circle cx="12" cy="7.8" r="0.9" fill="currentColor" stroke="none"/>
+          </svg>
+        </button>
+        <button type="button" id="btn-theme" class="win-btn theme-btn" title="Switch between light and dark">
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z" stroke-linejoin="round"/>
+          </svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <circle cx="12" cy="12" r="4.2"/>
+            <path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button type="button" id="tl-min" class="win-btn" title="Minimize">
+          <svg viewBox="0 0 12 12"><path d="M2 6h8" stroke="currentColor" stroke-width="1.2"/></svg>
+        </button>
+        <button type="button" id="tl-max" class="win-btn" title="Maximize">
+          <svg viewBox="0 0 12 12"><rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+        </button>
+        <button type="button" id="tl-close" class="win-btn win-close" title="Close">
+          <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        </button>
       </div>
-    </div>
+    </header>
 
-    <main class="content">
+    <main class="layout">
       <!-- Screens -->
-      <section class="card">
-        <div class="card-header">
+      <section class="panel screens-panel">
+        <div class="panel-head">
           <div>
             <h2>Screens</h2>
-            <p class="card-sub" id="source-hint">Add one or more screens — they are combined into a grid in a single video.</p>
+            <p class="panel-sub" id="source-hint">Arrange screens to define the video layout</p>
           </div>
-          <button type="button" id="btn-add-screen" class="btn btn-tint">＋ Add Screen</button>
+          <button type="button" id="btn-add-screen" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
+              <path d="M12 5v14M5 12h14" stroke-linecap="round"/>
+            </svg>
+            Add screen
+          </button>
         </div>
+
+        <div id="webcam-preview" class="webcam-preview hidden" data-pos="bottom-right">
+          <video id="webcam-preview-video" autoplay muted playsinline></video>
+        </div>
+
         <div id="screen-grid" class="screen-grid">
           <div class="screen-empty" id="screen-empty">
-            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" opacity="0.45">
-              <rect x="2" y="4" width="20" height="13" rx="2" stroke="currentColor" stroke-width="1.5"/>
-              <path d="M8 21h8M12 17v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+              <rect x="2.5" y="4" width="19" height="13" rx="2.5"/>
+              <path d="M8.5 21h7M12 17.5V21" stroke-linecap="round"/>
             </svg>
-            <p>No screens added yet</p>
-            <p class="muted">Click “Add Screen” and pick a display or window</p>
+            <p class="empty-title">No screens added yet</p>
+            <p class="empty-sub">Select “Add screen” and pick a display or window</p>
           </div>
         </div>
         <p id="source-error" class="error hidden"></p>
       </section>
 
-      <div class="row-2col">
-        <!-- Options -->
-        <section class="card">
-          <div class="card-header"><h2>Options</h2></div>
-          <div class="option-list">
-            <label class="option-row">
-              <span class="option-label">
-                <span class="option-name">Microphone</span>
-                <span class="option-desc">Record your voice</span>
-              </span>
-              <span class="switch"><input type="checkbox" id="toggle-mic" checked><span class="slider"></span></span>
-            </label>
-            <label class="option-row">
-              <span class="option-label">
-                <span class="option-name">System audio</span>
-                <span class="option-desc">Tick “share audio” in the picker of the first screen</span>
-              </span>
-              <span class="switch"><input type="checkbox" id="toggle-system-audio"><span class="slider"></span></span>
-            </label>
-            <label class="option-row">
-              <span class="option-label">
-                <span class="option-name">Webcam overlay</span>
-                <span class="option-desc">Small camera in the corner</span>
-              </span>
-              <span class="switch"><input type="checkbox" id="toggle-webcam"><span class="slider"></span></span>
-            </label>
-            <label class="option-row">
-              <span class="option-label">
-                <span class="option-name">Convert to MP4</span>
-                <span class="option-desc">Re-encode with H.264 after recording</span>
-              </span>
-              <span class="switch"><input type="checkbox" id="toggle-convert-mp4"><span class="slider"></span></span>
-            </label>
-            <div class="option-row">
-              <span class="option-label">
-                <label class="option-name" for="toggle-stop-timer">Auto-stop after</label>
-                <span class="option-desc">
-                  <input type="number" id="timer-minutes" min="0" max="999" value="5" class="num-input"> min
-                  <input type="number" id="timer-seconds" min="0" max="59" value="0" class="num-input"> sec
-                </span>
-              </span>
-              <label class="switch"><input type="checkbox" id="toggle-stop-timer"><span class="slider"></span></label>
-            </div>
-          </div>
-        </section>
+      <!-- Settings -->
+      <aside class="panel settings-panel">
+        <h2 class="settings-title">Recording settings</h2>
 
-        <!-- Quality -->
-        <section class="card">
-          <div class="card-header"><h2>Quality</h2></div>
-          <div class="field">
-            <span class="field-label">Video bitrate</span>
-            <div class="chip-row" id="bitrate-chips">
-              <button type="button" class="chip" data-rate="1000000" data-hint="Smallest file — for quick drafts">1</button>
-              <button type="button" class="chip" data-rate="2000000" data-hint="Low — small file, soft details">2</button>
-              <button type="button" class="chip active" data-rate="3000000" data-hint="Balanced quality and size — recommended">3</button>
-              <button type="button" class="chip" data-rate="5000000" data-hint="High — crisp text and motion">5</button>
-              <button type="button" class="chip" data-rate="8000000" data-hint="Best clarity — largest file">8</button>
-              <span class="chip-unit">Mbps</span>
-            </div>
-            <p class="chip-hint" id="bitrate-hint">Balanced quality and size — recommended</p>
-          </div>
-          <div class="field">
-            <span class="field-label">max resolution</span>
-            <div class="chip-row" id="res-chips">
-              <button type="button" class="chip chip-wide" data-w="1280" data-h="720" data-hint="Output fits within 1280 x 720">720p</button>
-              <button type="button" class="chip chip-wide active" data-w="1920" data-h="1080" data-hint="Output fits within 1920 x 1080 (Full HD)">FHD</button>
-              <button type="button" class="chip chip-wide" data-w="2560" data-h="1440" data-hint="Output fits within 2560 x 1440 (QHD)">2K</button>
-              <button type="button" class="chip chip-wide" data-w="3840" data-h="2160" data-hint="Output fits within 3840 x 2160 (UHD)">4K</button>
-              <button type="button" class="chip chip-wide" data-w="7680" data-h="4320" data-hint="Output fits within 7680 x 4320">8K</button>
-            </div>
-            <p class="chip-hint" id="res-hint">Output fits within 1920 x 1080 (Full HD)</p>
-          </div>
-          <div class="field">
-            <span class="field-label">Codec</span>
-            <div class="segmented" id="codec-segmented">
-              <button type="button" class="seg-btn active" data-codec="vp8">VP8 <small>smooth seek</small></button>
-              <button type="button" class="seg-btn" data-codec="vp9">VP9 <small>smaller file</small></button>
-            </div>
-          </div>
-          <div class="field">
-            <span class="field-label">Save to</span>
-            <div class="save-path-row">
-              <code id="recordings-path" class="path-code" title="">—</code>
-              <button type="button" id="btn-change-recordings" class="btn btn-mini">Change</button>
-              <button type="button" id="btn-open-recordings" class="btn btn-mini">Open</button>
-            </div>
-          </div>
-        </section>
-      </div>
+        <div class="setting-list">
+          <label class="setting-row">
+            <span class="setting-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                <rect x="9" y="2.5" width="6" height="11" rx="3"/>
+                <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21.5" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span class="setting-name">Microphone</span>
+            <span class="switch"><input type="checkbox" id="toggle-mic" checked><span class="slider"></span></span>
+          </label>
 
-      <!-- Status -->
-      <section class="card status-card">
-        <div class="status-row">
-          <span id="status-dot" class="status-dot"></span>
-          <span id="status" class="status-text">Ready</span>
-          <span id="timer-countdown" class="countdown hidden"></span>
+          <label class="setting-row">
+            <span class="setting-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                <path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4z" stroke-linejoin="round"/>
+                <path d="M16 9.2a4 4 0 0 1 0 5.6M18.6 6.6a7.5 7.5 0 0 1 0 10.8" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span class="setting-name">System audio</span>
+            <span class="switch"><input type="checkbox" id="toggle-system-audio"><span class="slider"></span></span>
+          </label>
+
+          <label class="setting-row">
+            <span class="setting-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                <rect x="2.5" y="6" width="13" height="12" rx="2.5"/>
+                <path d="M15.5 11l6-3.2v8.4l-6-3.2z" stroke-linejoin="round"/>
+              </svg>
+            </span>
+            <span class="setting-name">Webcam</span>
+            <span class="switch"><input type="checkbox" id="toggle-webcam"><span class="slider"></span></span>
+          </label>
+
+          <div class="subsetting hidden" id="webcam-options">
+            <div class="subsetting-row">
+              <span class="subsetting-label">Position</span>
+              <div class="corner-picker" id="webcam-position" role="radiogroup" aria-label="Webcam position">
+                <button type="button" class="corner" data-pos="top-left" role="radio" aria-checked="false" title="Top left"></button>
+                <button type="button" class="corner" data-pos="top-right" role="radio" aria-checked="false" title="Top right"></button>
+                <button type="button" class="corner" data-pos="bottom-left" role="radio" aria-checked="false" title="Bottom left"></button>
+                <button type="button" class="corner active" data-pos="bottom-right" role="radio" aria-checked="true" title="Bottom right"></button>
+              </div>
+            </div>
+            <label class="subsetting-row">
+              <span class="subsetting-label">Circular</span>
+              <span class="switch switch-sm"><input type="checkbox" id="toggle-webcam-circle"><span class="slider"></span></span>
+            </label>
+          </div>
         </div>
+
+        <div class="setting-divider"></div>
+
+        <div class="setting-list">
+          <div class="setting-row">
+            <span class="setting-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                <rect x="2.5" y="4" width="19" height="13" rx="2.5"/>
+                <path d="M8.5 21h7" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span class="setting-name">Resolution</span>
+            <div class="select-wrap">
+              <select id="select-resolution" class="select">
+                <option value="1280x720">720p</option>
+                <option value="1920x1080" selected>1080p</option>
+                <option value="2560x1440">1440p</option>
+                <option value="3840x2160">4K</option>
+                <option value="7680x4320">8K</option>
+              </select>
+              <svg class="select-caret" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4">
+                <path d="M3 4.5L6 7.5l3-3" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <span class="setting-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                <path d="M6 2.5h8l4.5 4.5v14.5H6z" stroke-linejoin="round"/>
+                <path d="M13.5 2.5V7.5H18.5" stroke-linejoin="round"/>
+              </svg>
+            </span>
+            <span class="setting-name">Format</span>
+            <div class="select-wrap">
+              <select id="select-format" class="select">
+                <option value="webm-vp8" selected>WebM (VP8)</option>
+                <option value="webm-vp9">WebM (VP9)</option>
+                <option value="mp4">MP4 (H.264)</option>
+              </select>
+              <svg class="select-caret" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4">
+                <path d="M3 4.5L6 7.5l3-3" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+          </div>
+
+          <div class="setting-block">
+            <div class="setting-block-head">
+              <span class="setting-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                  <path d="M4 17V9M9.3 17V5M14.7 17v-6M20 17v-9" stroke-linecap="round"/>
+                  <path d="M4 21h16" stroke-linecap="round"/>
+                </svg>
+              </span>
+              <span class="setting-name">Quality</span>
+              <span class="quality-value" id="quality-name">Balanced</span>
+            </div>
+
+            <input type="range" id="range-bitrate" class="range" min="0" max="4" step="1" value="2"
+                   aria-label="Recording quality">
+
+            <div class="quality-preview" id="quality-preview" aria-hidden="true">
+              <span class="qp-bar" data-level="0"></span>
+              <span class="qp-bar" data-level="1"></span>
+              <span class="qp-bar" data-level="2"></span>
+              <span class="qp-bar" data-level="3"></span>
+              <span class="qp-bar" data-level="4"></span>
+            </div>
+
+            <p class="quality-hint" id="quality-hint">Text stays readable — good for most recordings</p>
+
+            <div class="estimate">
+              <span class="estimate-text">
+                <strong id="estimate-size">—</strong> per 10 min
+              </span>
+              <span class="estimate-note">depends on motion</span>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <span class="setting-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                <circle cx="12" cy="13" r="8"/>
+                <path d="M12 9v4.5l3 1.5M9 2.5h6" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span class="setting-name">Auto-stop</span>
+            <span class="timer-controls">
+              <input type="number" id="timer-minutes" min="0" max="999" value="5" class="num-input" aria-label="Minutes">
+              <span class="num-unit">m</span>
+              <input type="number" id="timer-seconds" min="0" max="59" value="0" class="num-input" aria-label="Seconds">
+              <span class="num-unit">s</span>
+              <label class="switch" title="Enable the auto-stop timer"><input type="checkbox" id="toggle-stop-timer"><span class="slider"></span></label>
+            </span>
+          </div>
+        </div>
+
         <div id="convert-progress" class="progress-block hidden">
-          <div class="progress-meta"><span id="convert-progress-label">Converting…</span><span id="convert-progress-pct">0%</span></div>
+          <div class="progress-meta">
+            <span id="convert-progress-label">Converting…</span>
+            <span id="convert-progress-pct">0%</span>
+          </div>
           <div class="progress-bar"><div id="convert-progress-fill" class="progress-fill"></div></div>
         </div>
-      </section>
+      </aside>
     </main>
 
-    <!-- Bottom action bar -->
     <footer class="actionbar">
-      <button type="button" id="btn-convert-file" class="btn btn-ghost" title="Convert an existing WebM file to MP4">
-        Convert file…
-      </button>
-      <div class="actionbar-center">
-        <button type="button" id="btn-record" class="record-btn" title="Start recording">
-          <span class="record-btn-inner"></span>
+      <div class="path-group">
+        <span class="path-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+            <path d="M3 7.5a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        <code id="recordings-path" class="path-code" title="">—</code>
+        <button type="button" id="btn-change-recordings" class="btn btn-ghost btn-icon-only" title="Change folder">···</button>
+        <button type="button" id="btn-open-recordings" class="btn btn-ghost" title="Open folder">Open</button>
+      </div>
+
+      <div class="status-group">
+        <span id="status-dot" class="status-dot"></span>
+        <span id="status" class="status-text">Ready</span>
+        <span id="timer-countdown" class="countdown hidden"></span>
+      </div>
+
+      <div class="action-group">
+        <button type="button" id="btn-convert-file" class="btn btn-ghost">Convert file…</button>
+        <button type="button" id="btn-preview" class="btn btn-ghost" disabled>Preview</button>
+        <button type="button" id="btn-record" class="btn btn-record">
+          <span class="record-dot"></span>
+          <span class="record-label">Start recording</span>
         </button>
       </div>
-      <button type="button" id="btn-preview" class="btn btn-ghost" disabled>Preview</button>
     </footer>
 
-    <!-- Preview modal -->
+    <div id="about-modal" class="modal hidden">
+      <div class="modal-content about-content">
+        <div class="modal-titlebar">
+          <span>About</span>
+          <button type="button" id="btn-close-about" class="modal-close" title="Close">
+            <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <div class="about-body">
+          <div class="about-head">
+            <span class="about-icon">
+              <svg viewBox="0 0 1024 1024">
+                <rect width="1024" height="1024" rx="224" fill="#2563EB"/>
+                <path d="M236 260c0-39.8 32.2-72 72-72h408c39.8 0 72 32.2 72 72v296c0 39.8-32.2 72-72 72h-76v44h72c22.1 0 40 17.9 40 40s-17.9 40-40 40H312c-22.1 0-40-17.9-40-40s17.9-40 40-40h72v-44h-76c-39.8 0-72-32.2-72-72V260Z" fill="#FFFFFF" opacity=".56"/>
+                <rect x="344" y="324" width="464" height="356" rx="72" fill="#FFFFFF"/>
+                <circle cx="576" cy="502" r="78" fill="#2563EB"/>
+              </svg>
+            </span>
+            <div>
+              <h3 class="about-name">Multi Screen Recorder</h3>
+              <p class="about-version">Version 1.0.0</p>
+            </div>
+          </div>
+
+          <p class="about-desc">
+            Record up to four screens or windows into a single video with an
+            automatic grid layout. Everything is processed on your device — no
+            account, no telemetry, no watermark.
+          </p>
+
+          <dl class="about-meta">
+            <div class="about-meta-row">
+              <dt>Author</dt>
+              <dd>Doan Duc</dd>
+            </div>
+            <div class="about-meta-row">
+              <dt>Contact</dt>
+              <dd><a href="#" id="link-email" class="about-link">thanhduc@banmai.org</a></dd>
+            </div>
+          </dl>
+
+          <p class="about-note">
+            Found a bug, or want a feature added? Send an email — feedback and
+            requests are welcome.
+          </p>
+
+          <div class="about-actions">
+            <button type="button" id="btn-email" class="btn btn-primary">Send feedback</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="preview-modal" class="modal hidden">
       <div class="modal-content">
         <div class="modal-titlebar">
           <span id="preview-title">Preview</span>
-          <button type="button" id="btn-close-preview" class="modal-close">&times;</button>
+          <button type="button" id="btn-close-preview" class="modal-close" title="Close">
+            <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </button>
         </div>
         <video id="preview-video" controls></video>
       </div>
